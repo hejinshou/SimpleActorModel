@@ -43,9 +43,9 @@ public:
 	
 	void send(Actor *other, std::string &msg);
 
-	void receive(Actor **other, std::string *msg);
+	//void receive(Actor **other, std::string *msg);
+	void RegisterHandler();
 	
-	virtual void run()=0;
 	virtual ~Actor()=0{}
 };
 
@@ -64,10 +64,17 @@ class ActorSystem
 {
 	ThreadPool &m_tp;
 	std::vector<std::shared_ptr<Actor>> m_actors;
+	
+	std::mutex              d_busy_actors_mutex;
 	std::vector<std::shared_ptr<Actor>> m_busy_actors;
+	
+	void run()
+	{
+	}
 public:
 	ActorSystem(ThreadPool &tp):m_tp(tp)
-	{}
+	{
+	}
 	
 	std::shared_ptr<Actor> spawn(std::function<void(Actor*)> f)
 	{
@@ -75,13 +82,19 @@ public:
 		m_actors.push_back(act);
 		return act;
 	}
-	
+	~ActorSystem()
+	{
+	}
 };
 
 void Actor::send(std::shared_ptr<Actor> other, std::string &msg)
 {
 	other->m_mb.push(std::make_pair(other, msg));
-	m_busy_actors.push_back(
+	
+	{
+	std::unique_lock<std::mutex> lock(m_as.d_busy_actors_mutex);
+	m_as.m_busy_actors.push_back(other);
+	}
 }
 
 void Actor::receive(Actor **other, std::string *msg)
@@ -111,7 +124,7 @@ void main()
 		}
 	});
 
-	actor_spawn([p1](Actor *This){
+	as.spawn([p1](Actor *This){
 		This->send(p1, "Hello");
 
 		std::string msg;
