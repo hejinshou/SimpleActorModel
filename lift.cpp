@@ -90,6 +90,7 @@ struct GetLiftFloorMsgRpy
 
 class Lift : public Actor
 {
+public:
 	double m_z;
 	State m_state;
 	bool m_bQuit;
@@ -147,8 +148,6 @@ private:
 					
 					send(m_controller, msg.str());
 				}
-
-				
 				
 			}
 			
@@ -193,9 +192,10 @@ class Controller : public Actor
 {
 	int m_innerBtns[NUM_LIFT][NUM_FLOOR];
 	int m_outerBtns[NUM_FLOOR][2];
-	int m_liftFloor[NUM_LIFT];
-	State m_liftDir[NUM_LIFT];
-	Address m_lifts[NUM_LIFT];
+	//int m_liftFloor[NUM_LIFT];
+	//State m_liftDir[NUM_LIFT];
+	//Address m_lifts[NUM_LIFT];
+	Lift *m_lifts[NUM_LIFT];
 	std::thread m_th1;
 public:
 
@@ -203,17 +203,16 @@ public:
 	{
 		memset(m_innerBtns, 0, sizeof(m_innerBtns));
 		memset(m_outerBtns, 0, sizeof(m_outerBtns));
-		memset(m_liftFloor, 0, sizeof(m_liftFloor));
-		std::fill(m_liftDir, m_liftDir+NUM_LIFT, StateStop);
 		memset(m_lifts, 0, sizeof(m_lifts));
+
+		for (size_t i = 0; i < NUM_LIFT; i++)
+		{
+			m_lifts[i] = new Lift(frm, addr(), i);
+		}
 
 		RegisterHandler(std::bind(&Controller::run, this));
 	}
 
-	void setLift(int lift, Address addr)
-	{
-		m_lifts[lift] = addr;
-	}
 	void print()
 	{
 		system("cls");
@@ -225,9 +224,9 @@ public:
 
 			for (size_t j = 0; j < NUM_LIFT; j++)
 			{
-				if (m_liftFloor[j]== floor)
+				if (getLiftCurrFloor(j)== floor)
 				{
-					int dir = m_liftDir[j];
+					int dir = getLiftDir(j);
 					char *sDir = "^v-";
 					printf("%c ", sDir[dir]);
 				}
@@ -240,9 +239,13 @@ public:
 		}
 	}
 private:
+	State getLiftDir(int lift)
+	{
+		return m_lifts[lift]->m_state;
+	}
 	int getLiftCurrFloor(int lift)
 	{
-		return m_liftFloor[lift];
+		return m_lifts[lift]->m_z;
 	}
 
 	void clickInnerFloor(int lift, int floor, int click=1)
@@ -283,8 +286,8 @@ private:
 			}
 			else if (mLiftSensorMsg.from(i.msg))
 			{
-				m_liftFloor[mLiftSensorMsg.lift] = mLiftSensorMsg.floor;
-				m_liftDir[mLiftSensorMsg.lift] = mLiftSensorMsg.dir;
+				//m_liftFloor[mLiftSensorMsg.lift] = mLiftSensorMsg.floor;
+				//m_liftDir[mLiftSensorMsg.lift] = mLiftSensorMsg.dir;
 
 				//如果电梯到达某层，可能需要开门
 				if (isInnerFloorClicked(mLiftSensorMsg.lift, mLiftSensorMsg.floor)	//如果里面目标楼层有着一层
@@ -315,9 +318,9 @@ private:
 				//看看有没有空闲的电梯，如有，则向该方向移动
 				for (size_t i = 0; i < NUM_LIFT; i++)
 				{
-					if (m_liftDir[i] == StateStop)
+					if (getLiftDir(i) == StateStop)
 					{
-						send(m_lifts[i], std::string(m_liftFloor[i]<mClickOuterBtnMsg.floor ? "Up" : "Down"));
+						send(m_lifts[i]->addr(), std::string(getLiftCurrFloor(i)<mClickOuterBtnMsg.floor ? "Up" : "Down"));
 						break;
 					}
 				}
@@ -352,15 +355,9 @@ void main() {
 	Framework frm;
 	
 	Controller c(frm);
-	Lift *s[NUM_LIFT];
+	
 	person p(frm);
 
-	for (size_t i = 0; i < NUM_LIFT; i++)
-	{
-		s[i] = new Lift(frm, c.addr(), i);
-		c.setLift(i, s[i]->addr());
-	}
-	
 	std::thread thdPrint([&]() {
 		while (1) {
 			c.print(); Sleep(500);
