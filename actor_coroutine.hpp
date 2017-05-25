@@ -3,6 +3,7 @@
 #include <memory>
 #include <map>
 #include <boost/coroutine/all.hpp>
+#include <windows.h>
 
 typedef boost::coroutines::coroutine< void >::pull_type pull_coro_t;
 typedef boost::coroutines::coroutine< void >::push_type push_coro_t;
@@ -63,14 +64,25 @@ private:
 	push_coro_t *m_push;
 	pull_coro_t *ppull;
 	std::function<void()> m_f;
-	bool	m_isWaitMsg;
 	
+	bool	m_bIsExit;
+
 	void waitDataThread(pull_coro_t &pull) {
 		ppull = &pull;
 
 		if (m_f)
 			m_f();
+
+		m_bIsExit = true;
 	}
+
+	static void CALLBACK TimerProc(
+		UINT      uTimerID,
+		UINT      uMsg,
+		DWORD_PTR dwUser,
+		DWORD_PTR dw1,
+		DWORD_PTR dw2
+	);
 
 	friend class Framework;
 public:
@@ -90,16 +102,15 @@ public:
 	Address addr() {
 		return m_addr;
 	}
-
+	void sleep(int ms);
 };
-
 
 
 class Framework {
 	int g_nmaxId;
 	std::map<int, Actor* > g_actors;
-	
-	
+	std::deque<Actor*>	g_readyQueue;
+
 	friend class Actor;
 public:
 	Framework():g_nmaxId(0)
@@ -109,6 +120,7 @@ public:
 	
 	bool receive(Address from, QueueItem &i);
 	void run();
+
 };
 
 ////////////////////////////////////////////////////
@@ -118,7 +130,7 @@ Actor::Actor(Framework &frm)
 	, ppull (0)
 {
 	m_addr.addr = frm.g_nmaxId++;
-	m_isWaitMsg = true;
+	m_bIsExit = false;
 	frm.g_actors[m_addr.addr] = this;
 }
 
@@ -134,16 +146,47 @@ void Actor::send(Address other, std::string &msg)
 
 QueueItem Actor::receive()
 {
-	m_isWaitMsg = true;
 	QueueItem i;
 	while (m_mailBox.empty())
 	{
 		assert(ppull);
 		(*ppull)();
 	}
+	
 	i = m_mailBox.pop();
-	m_isWaitMsg = false;
+	
 	return std::move(i);
+}
+
+//可能在另外一个线程里面
+void Actor::TimerProc(
+	UINT      uTimerID,
+	UINT      uMsg,
+	DWORD_PTR dwUser,
+	DWORD_PTR dw1,
+	DWORD_PTR dw2
+) {
+	Actor *This = (Actor*)dwUser;
+	//printf("Actor: %d sleeping OK\n", This->m_addr.addr);
+	//把自己加入到ready队列
+	This->m_frm.g_readyQueue.push_back(This);
+}
+
+void Actor::sleep(int ms)
+{
+	//printf("Actor: %d sleeping\n", m_addr.addr);
+
+	//把自己加入到waiting队列
+
+	timeSetEvent(
+		ms,
+		0,
+		Actor::TimerProc,
+		(DWORD_PTR)this,
+		TIME_ONESHOT| TIME_CALLBACK_FUNCTION
+	);
+	assert(ppull);
+	(*ppull)();
 }
 
 ////////////////////////////////////////////////////
@@ -159,6 +202,8 @@ void Framework::Send(Address from, Address to, std::string const &msg)
 
 	QueueItem i{ msg, from };
 	d->second->m_mailBox.push(i);
+	//把对方加入ready队列
+	g_readyQueue.push_back(d->second);
 }
 
 bool Framework::receive(Address from, QueueItem &i)
@@ -183,13 +228,20 @@ void Framework::run()
 
 		for (auto it : g_actors)
 		{
-			if (it.second->m_isWaitMsg)
-			{
+			if (!it.second->m_bIsExit)
 				bHasMsg = true;
-
-				if((*it.second->m_push))
-					(*it.second->m_push)();
-			}
 		}
+			
+		// if (waiting队列不为空)
+		if (!g_readyQueue.empty())
+		{
+			Actor *This = g_readyQueue.front();
+			g_readyQueue.pop_front();
+
+			if ((*This->m_push))
+				(*This->m_push)();
+
+		}
+		
 	}
 }
