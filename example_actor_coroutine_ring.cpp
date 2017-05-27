@@ -17,6 +17,7 @@ public:
 
 	void run()
 	{
+		printf("Node %d, running\n", m_id);
 		auto msg=receive();
 		printf("Node %d, Receive %s\n", m_id, msg.msg.c_str());
 		

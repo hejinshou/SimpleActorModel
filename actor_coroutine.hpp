@@ -92,6 +92,7 @@ public:
 	{
 		m_f = f;
 		m_push = new push_coro_t(std::bind(&Actor::waitDataThread, this, _1));
+		(*m_push)();
 	}
 	
 	void send(Address other, std::string &msg);
@@ -103,6 +104,7 @@ public:
 		return m_addr;
 	}
 	void sleep(int ms);
+	void yield();
 };
 
 
@@ -185,6 +187,12 @@ void Actor::sleep(int ms)
 		(DWORD_PTR)this,
 		TIME_ONESHOT| TIME_CALLBACK_FUNCTION
 	);
+	assert(ppull);
+	(*ppull)();
+}
+
+void Actor::yield() {
+	this->m_frm.g_readyQueue.push_back(this);
 	assert(ppull);
 	(*ppull)();
 }
