@@ -88,12 +88,7 @@ private:
 public:
 	Actor(Framework &);
 
-	void RegisterHandler(std::function<void()> f)
-	{
-		m_f = f;
-		m_push = new push_coro_t(std::bind(&Actor::waitDataThread, this, _1));
-		(*m_push)();
-	}
+	void RegisterHandler(std::function<void()> f);
 	
 	void send(Address other, std::string &msg);
 
@@ -139,6 +134,13 @@ Actor::Actor(Framework &frm)
 Actor::~Actor()
 {
 	m_frm.g_actors.erase(m_addr.addr);
+}
+
+void Actor::RegisterHandler(std::function<void()> f)
+{
+	m_f = f;
+	m_push = new push_coro_t(std::bind(&Actor::waitDataThread, this, _1));
+	this->m_frm.g_readyQueue.push_back(this);
 }
 
 void Actor::send(Address other, std::string &msg)

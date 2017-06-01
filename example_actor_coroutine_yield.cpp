@@ -22,7 +22,7 @@ public:
 void main() {
 	Framework frm;
 	
-	const int N = 1;
+	const int N = 10;
 
 	Node *c[N];
 	
