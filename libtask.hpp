@@ -2,7 +2,8 @@
 #include <functional>
 #include <memory>
 #include <boost/coroutine/all.hpp>
-//#include <boost/any.hpp>
+#include <boost/any.hpp>
+#include <set>
 
 typedef boost::coroutines::coroutine< void >::pull_type pull_coro_t;
 typedef boost::coroutines::coroutine< void >::push_type push_coro_t;
@@ -17,6 +18,11 @@ yield时，放在就绪队列末尾。
 注意：一个task可能在的几个地方
 就绪队列，某个channel的等待队列，什么队列都不在
 这几个地方同时只能选其一
+
+todo：
+支持sleep
+支持多线程调度，使用work stealing
+支持把channel的等待队列加入全局信息
 */
 struct Task: std::enable_shared_from_this<Task> {
 
@@ -37,28 +43,46 @@ struct ChannelImpl {
 	std::deque<std::shared_ptr<Task>> _waitingQueue;	//Tasks waiting this ChannelImpls
 	std::deque<T> _data;
 
+	~ChannelImpl() {
+		assert(_waitingQueue.empty());
+		assert(_data.empty());
+	}
+
 	T pop(Task *currTsk);
 	void push(T const&);
 };
 
 template <class T>
 struct Channel {
-	std::shared_ptr<ChannelImpl<T>> impl;
+	std::shared_ptr<ChannelImpl<boost::any>> impl;
 
-	Channel():impl(std::make_shared<ChannelImpl<T>>()){}
+	Channel();
+	~Channel();
 
 	T pop(Task *currTsk=0) const {
-		return impl->pop(currTsk);
+		boost::any a= impl->pop(currTsk);
+		return boost::any_cast<T>(a);
 	}
 	void push(T const& t) const {
-		impl->push(t);
+		impl->push(boost::any(t));
 	}
 };
 
-//std::deque<std::shared_ptr<ChannelImpl<T>>> _channels;
+std::deque<std::weak_ptr<ChannelImpl<boost::any>>> _channels;
 std::deque<std::shared_ptr<Task>>	_readyQueue;
 std::shared_ptr<Task>	_activeTask;
 std::size_t	_nCreatedTasks = 0;
+
+/**Channel**/
+template <class T>
+Channel<T>::Channel() :impl(std::make_shared<ChannelImpl<boost::any>>()) {
+	_channels.push_back(impl);
+}
+
+template <class T>
+Channel<T>::~Channel() {
+	
+}
 
 /**Task**/
 void Task::yield() {
@@ -160,4 +184,6 @@ void  taskRun() {
 		_activeTask = task;
 		(*task->_push)();
 	}
+
+	assert(std::find_if(_channels.begin(), _channels.end(), [](std::weak_ptr<ChannelImpl<boost::any>> &i) {return i.lock(); }) == _channels.end());;
 }
