@@ -1,0 +1,76 @@
+//MyLibTask
+/*
+用法：计算1.。n的和
+def f(chan &c, int a, int b):
+	
+	if(a+1==b)
+		c << a;
+	else {
+		chan c2;
+		
+		int mid=(a+b)/2;
+		int cnt=0;
+		if (mid>a){
+			createTask([&](){f(c2, a, mid);});
+			cnt++;
+		}
+		if (mid<b){
+			createTask([&](){f(c2, mid, b);});
+			cnt++;
+		}
+		int sum=0;
+		for(int i=0; i<cnt; i++)
+			sum += c2.pop();
+		c << sum;
+	}
+}
+	
+def main_co()
+	chan c;	
+	createTask([&](){f(c, 1, 100);});
+	int sum = c.pop();
+
+任务信息：
+	当前状态，对应的coroutine context地址
+	
+全局变量：全局就绪队列（任务可以马上运行），全局等待队列（按照等待时间排序）
+		
+
+关键做法：
+channel？？		每个channel除了有个数据queue之外，还要有个等待该channel的task列表
+	如果读取cahnnel，而channel没数据，则将task加入该channel的等待队列，然后pull来释放控制权给调度程序；
+	如为写channel，要根据channel大小做不同处理，
+		如果channel已满，则需要将task放入等待队列，然后pull来释放控制权给调度程序
+		否则不急
+sleep		根据sleep时间，将task放入等待队列相应位置，然后pull来释放控制权给调度程序
+yield		将该任务加入全局就绪队列，然后pull来释放控制权给调度程序
+
+def createTask：
+	将task加入全局就绪队列，注意加锁保护
+	
+def co_run:
+	def [task, delay, ntaskRemain]=fetch_ready_task:
+		该函数要一直加锁
+		if 全局就绪队列不为空，则拿一项（注意加锁）
+		else if 全局等待队列不为空
+			if 全局等待队列第一项已经超时
+				将该任务加入全局就绪队列
+		else break
+		
+	建立线程相关信息
+	while 1：
+		[task, delay, ntaskRemain]=fetch_ready_task
+		if task:
+			trigger 对应的context来执行他
+		if !ntaskRemain
+			break;
+		
+	
+def main:
+	createTask(main)
+	co_run()
+	or create n thread to run co.run
+	
+做法：
+用线程池	
+*/
