@@ -4,6 +4,7 @@
 #include <boost/coroutine/all.hpp>
 #include <boost/any.hpp>
 #include <set>
+#include "boost/date_time/posix_time/posix_time.hpp"
 
 typedef boost::coroutines::coroutine< void >::pull_type pull_coro_t;
 typedef boost::coroutines::coroutine< void >::push_type push_coro_t;
@@ -20,9 +21,10 @@ yield时，放在就绪队列末尾。
 这几个地方同时只能选其一
 
 todo：
-支持sleep
+支持sleep	-- done
 支持多线程调度，使用work stealing
 支持把channel的等待队列加入全局信息
+考虑如何测试
 */
 struct Task: std::enable_shared_from_this<Task> {
 
@@ -36,6 +38,7 @@ struct Task: std::enable_shared_from_this<Task> {
 	Task() :_pull(0) {}
 
 	void yield();
+	void sleep(int ms);
 };
 
 template <class T>
@@ -46,6 +49,7 @@ struct ChannelImpl {
 	~ChannelImpl() {
 		assert(_waitingQueue.empty());
 		assert(_data.empty());
+		printf("Exit " __FUNCTION__ "\n");
 	}
 
 	T pop(Task *currTsk);
@@ -68,8 +72,15 @@ struct Channel {
 	}
 };
 
+struct WaitingTask
+{
+	std::shared_ptr<Task> t;
+	boost::posix_time::ptime _timeToWakeup;
+};
+
 std::deque<std::weak_ptr<ChannelImpl<boost::any>>> _channels;
 std::deque<std::shared_ptr<Task>>	_readyQueue;
+std::deque<WaitingTask>	_waitingQueue;
 std::shared_ptr<Task>	_activeTask;
 std::size_t	_nCreatedTasks = 0;
 
@@ -95,6 +106,19 @@ void Task::yield() {
 	}
 	assert(this == _activeTask.get());
 	_readyQueue.push_back(getptr());
+	(*_pull)();
+}
+
+void Task::sleep(int ms) {
+	assert(this == _activeTask.get());
+
+	WaitingTask wt;
+	wt.t = this->getptr();
+
+	boost::posix_time::ptime mst1 = boost::posix_time::microsec_clock::local_time();
+	wt._timeToWakeup = mst1 + boost::posix_time::millisec(ms);
+
+	_waitingQueue.push_back(wt);
 	(*_pull)();
 }
 
@@ -169,21 +193,49 @@ void taskYield() {
 	_activeTask->yield();
 }
 
+void taskSleep(int ms) {
+	_activeTask->sleep(ms);
+}
 /*bug
 没有处理等待的channel
 */
 void  taskRun() {
 	
 	int nLoop = 0;
-	while (!_readyQueue.empty()) {
-		if(nLoop++%10==0)
-			printf("\rnCreatedTasks %zd readyQueueSize %zd", _nCreatedTasks, _readyQueue.size());
-		auto task = _readyQueue.front();
-		_readyQueue.pop_front();
-		
-		_activeTask = task;
-		(*task->_push)();
-	}
+	
+	while (true)
+	{
+		while (!_readyQueue.empty()) {
+			if (nLoop++ % 10 == 0)
+				printf("\rnCreatedTasks %zd readyQueueSize %zd", _nCreatedTasks, _readyQueue.size());
+			auto task = _readyQueue.front();
+			_readyQueue.pop_front();
 
-	assert(std::find_if(_channels.begin(), _channels.end(), [](std::weak_ptr<ChannelImpl<boost::any>> &i) {return i.lock(); }) == _channels.end());;
+			_activeTask = task;
+			(*task->_push)();
+		}
+
+		while (!_waitingQueue.empty())
+		{
+			boost::posix_time::ptime mst = boost::posix_time::microsec_clock::local_time();
+			
+			auto i = _waitingQueue.front();
+			if (mst >= i._timeToWakeup) {
+				_readyQueue.push_back(i.t);
+				_waitingQueue.pop_front();
+			}
+			else {
+				boost::posix_time::time_duration td = i._timeToWakeup - mst;
+				Sleep(td.total_milliseconds());
+			}
+		}
+
+		if (_readyQueue.empty() && _waitingQueue.empty())
+		{
+			break;
+		}
+	}
+	
+	//assert(std::find_if(_channels.begin(), _channels.end(), [](std::weak_ptr<ChannelImpl<boost::any>> &i) {return i.lock(); }) == _channels.end());;
+	printf("Exit taskRun\n");
 }

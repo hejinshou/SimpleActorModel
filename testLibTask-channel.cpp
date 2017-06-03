@@ -13,7 +13,7 @@ void taskMain(Task *t) {
 	
 	for (int i = 0; i < 5; i++)
 		c.push(100*i);
-	printf("s\n");
+	printf("XXXXXX\n");
 }
 void t1() {
 	taskCreate(taskMain);
