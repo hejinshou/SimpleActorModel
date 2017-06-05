@@ -5,6 +5,7 @@
 #include <boost/any.hpp>
 #include <set>
 #include "boost/date_time/posix_time/posix_time.hpp"
+#include <boost/thread/mutex.hpp>
 
 typedef boost::coroutines::coroutine< void >::pull_type pull_coro_t;
 typedef boost::coroutines::coroutine< void >::push_type push_coro_t;
@@ -17,7 +18,7 @@ yield时，放在就绪队列末尾。
 等待channel时，如果channel为空，则将自己放在channel的等待队列末尾
 
 注意：一个task可能在的几个地方
-就绪队列，某个channel的等待队列，什么队列都不在
+就绪队列，某个channel的等待队列，全局等待队列，什么队列都不在
 这几个地方同时只能选其一
 
 todo：
@@ -26,6 +27,35 @@ todo：
 支持把channel的等待队列加入全局信息
 考虑如何测试
 */
+
+template <class T>
+struct LockPtrImpl {
+	T &_t;
+	boost::mutex	&_Mtx;
+
+	LockPtrImpl(T &t, boost::mutex &m) :_t(t), _Mtx(m) {
+		_Mtx.lock();
+	}
+
+	~LockPtrImpl() {
+		_Mtx.unlock();
+	}
+
+	T* operator->() {
+		return &_t;
+	}
+};
+
+template <class T>
+struct LockPtr {
+	T _t;
+	boost::mutex	_Mtx;
+
+	LockPtrImpl<T> operator*() {
+		return LockPtrImpl<T>(_t, _Mtx);
+	}
+};
+
 struct Task: std::enable_shared_from_this<Task> {
 
 	std::shared_ptr<Task> getptr() {
