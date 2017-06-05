@@ -2,5 +2,6 @@
 
 void main() {
 	LockPtr<std::vector<int>> a;
-	(*a)->push_back(1);
+	auto i(*a);
+	i->push_back(1);
 }

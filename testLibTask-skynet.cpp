@@ -1,5 +1,6 @@
 #include "libtask.hpp"
 #include <vector>
+#include <boost/thread.hpp>
 
 typedef Channel<std::uint64_t>	channel_type;
 
@@ -49,7 +50,16 @@ void taskMain(Task *t) {
 void t1() {
 	taskCreate(taskMain);
 
-	taskRun();
+	boost::thread_group g;
+
+	int threads = 4;
+	while (threads--)
+	{
+		auto worker = []() {taskRun(); };
+		g.add_thread(new boost::thread(worker));
+	}
+
+	g.join_all();
 }
 
 void main() {

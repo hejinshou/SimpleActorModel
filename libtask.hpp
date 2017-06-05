@@ -5,7 +5,7 @@
 #include <boost/any.hpp>
 #include <set>
 #include "boost/date_time/posix_time/posix_time.hpp"
-#include <boost/thread/mutex.hpp>
+#include <boost/thread/recursive_mutex.hpp>
 
 typedef boost::coroutines::coroutine< void >::pull_type pull_coro_t;
 typedef boost::coroutines::coroutine< void >::push_type push_coro_t;
@@ -31,28 +31,35 @@ todo：
 template <class T>
 struct LockPtrImpl {
 	T &_t;
-	boost::mutex	&_Mtx;
+	boost::recursive_mutex	&_Mtx;
 
-	LockPtrImpl(T &t, boost::mutex &m) :_t(t), _Mtx(m) {
+	LockPtrImpl(T &t, boost::recursive_mutex &m) :_t(t), _Mtx(m) {
 		_Mtx.lock();
+		//printf("Lock\n");
 	}
+
+	//LockPtrImpl(LockPtrImpl &&r): {
+	//}
 
 	~LockPtrImpl() {
 		_Mtx.unlock();
+		//printf("UnLock\n");
 	}
 
 	T* operator->() {
 		return &_t;
 	}
+private:
+	LockPtrImpl() = delete;
 };
 
 template <class T>
 struct LockPtr {
 	T _t;
-	boost::mutex	_Mtx;
+	boost::recursive_mutex	_Mtx;
 
 	LockPtrImpl<T> operator*() {
-		return LockPtrImpl<T>(_t, _Mtx);
+		return (LockPtrImpl<T>(_t, _Mtx));
 	}
 };
 
@@ -74,12 +81,12 @@ struct Task: std::enable_shared_from_this<Task> {
 template <class T>
 struct ChannelImpl {
 	std::deque<std::shared_ptr<Task>> _waitingQueue;	//Tasks waiting this ChannelImpls
-	std::deque<T> _data;
+	LockPtr<std::deque<T>> _data;
 
 	~ChannelImpl() {
 		assert(_waitingQueue.empty());
-		assert(_data.empty());
-		printf("Exit " __FUNCTION__ "\n");
+		assert((*_data)->empty());
+		//printf("Exit " __FUNCTION__ "\n");
 	}
 
 	T pop(Task *currTsk);
@@ -108,8 +115,8 @@ struct WaitingTask
 	boost::posix_time::ptime _timeToWakeup;
 };
 
-std::deque<std::weak_ptr<ChannelImpl<boost::any>>> _channels;
-std::deque<std::shared_ptr<Task>>	_readyQueue;
+LockPtr<std::deque<std::weak_ptr<ChannelImpl<boost::any>>>> _channels;
+LockPtr<std::deque<std::shared_ptr<Task>>>	_readyQueue;
 std::deque<WaitingTask>	_waitingQueue;
 std::shared_ptr<Task>	_activeTask;
 std::size_t	_nCreatedTasks = 0;
@@ -117,7 +124,7 @@ std::size_t	_nCreatedTasks = 0;
 /**Channel**/
 template <class T>
 Channel<T>::Channel() :impl(std::make_shared<ChannelImpl<boost::any>>()) {
-	_channels.push_back(impl);
+	(*_channels)->push_back(impl);
 }
 
 template <class T>
@@ -127,20 +134,20 @@ Channel<T>::~Channel() {
 
 /**Task**/
 void Task::yield() {
-	for (auto it: _readyQueue)
-	{
-		if (it.get()==this)
-		{
-			assert(0);
-		}
-	}
-	assert(this == _activeTask.get());
-	_readyQueue.push_back(getptr());
+	//for (auto it: _readyQueue)
+	//{
+	//	if (it.get()==this)
+	//	{
+	//		assert(0);
+	//	}
+	//}
+	//assert(this == _activeTask.get());
+	(*_readyQueue)->push_back(getptr());
 	(*_pull)();
 }
 
 void Task::sleep(int ms) {
-	assert(this == _activeTask.get());
+	//assert(this == _activeTask.get());
 
 	WaitingTask wt;
 	wt.t = this->getptr();
@@ -157,32 +164,36 @@ template <class T>
 T ChannelImpl<T>::pop(Task *currTsk) {
 	if (currTsk)
 	{
-		assert(currTsk == _activeTask.get());
+		//assert(currTsk == _activeTask.get());
 	}
 	else {
-		currTsk = _activeTask.get();
+		//currTsk = _activeTask.get();
 	}
 
-	while (_data.empty())
+	while ((*_data)->empty())
 	{
 		currTsk->yield();
 	}
 	
-	T t(std::move(_data.front()));
-	_data.pop_front();
+	T t;
+	{
+		auto id((*_data));
+		t = (std::move(id->front()));
+		id->pop_front();
+	}
 	return std::move(t);
 }
 
 template <class T>
 void ChannelImpl<T>::push(T const& t) {
-	_data.push_back(t);
+	(*_data)->push_back(t);
 
 	bool bFinish = false;
 	while (!_waitingQueue.empty() && !bFinish)
 	{
 		auto waittsk = _waitingQueue.front();
 		if (waittsk) {
-			_readyQueue.push_back(waittsk);
+			(*_readyQueue)->push_back(waittsk);
 			bFinish = true;
 		}
 		_waitingQueue.pop_front();
@@ -194,7 +205,7 @@ void taskFn(pull_coro_t &pull, std::function<void(Task*)> f, Task *task) {
 
 	pull();
 
-	assert(task == _activeTask.get());
+	//assert(task == _activeTask.get());
 	f(task);
 }
 
@@ -207,41 +218,55 @@ void taskCreate(std::function<void(Task*)> f){
 	task->_push = std::make_shared<push_coro_t>(std::bind(taskFn, _1, f, task.get()));
 	(*task->_push)();	// Trigger the setup of task*
 
-	_readyQueue.push_back(task);
+	(*_readyQueue)->push_back(task);
 }
 
-void taskCreate2(std::function<void()> f) {
-	std::function<void(Task* t)> f2 = [=](Task* t) {
-		assert(t == _activeTask.get());
-		f();
-	};
+//void taskCreate2(std::function<void()> f) {
+//	std::function<void(Task* t)> f2 = [=](Task* t) {
+//		assert(t == _activeTask.get());
+//		f();
+//	};
+//
+//	taskCreate(f2);
+//}
 
-	taskCreate(f2);
+//void taskYield() {
+//	//_activeTask->yield();
+//}
+//
+//void taskSleep(int ms) {
+//	//_activeTask->sleep(ms);
+//}
+
+bool readyQueue_GetTask(std::shared_ptr<Task> &task) {
+	auto q = (*_readyQueue);
+
+	int nLoop = 0;
+	if (nLoop++ % 10 == 0)
+		printf("\rnCreatedTasks %zd readyQueueSize %zd ", _nCreatedTasks, q->size());
+
+
+	if (q->empty()) {
+		return false;
+	}
+	task = q->front();
+	q->pop_front();
+	return true;
 }
 
-void taskYield() {
-	_activeTask->yield();
-}
-
-void taskSleep(int ms) {
-	_activeTask->sleep(ms);
-}
 /*bug
 没有处理等待的channel
 */
 void  taskRun() {
 	
-	int nLoop = 0;
+	
 	
 	while (true)
 	{
-		while (!_readyQueue.empty()) {
-			if (nLoop++ % 10 == 0)
-				printf("\rnCreatedTasks %zd readyQueueSize %zd", _nCreatedTasks, _readyQueue.size());
-			auto task = _readyQueue.front();
-			_readyQueue.pop_front();
-
-			_activeTask = task;
+		std::shared_ptr<Task> task;
+		while (readyQueue_GetTask(task)) {
+			
+			//_activeTask = task;
 			(*task->_push)();
 		}
 
@@ -251,7 +276,7 @@ void  taskRun() {
 			
 			auto i = _waitingQueue.front();
 			if (mst >= i._timeToWakeup) {
-				_readyQueue.push_back(i.t);
+				(*_readyQueue)->push_back(i.t);
 				_waitingQueue.pop_front();
 			}
 			else {
@@ -260,7 +285,7 @@ void  taskRun() {
 			}
 		}
 
-		if (_readyQueue.empty() && _waitingQueue.empty())
+		if ((*_readyQueue)->empty() && _waitingQueue.empty())
 		{
 			break;
 		}
